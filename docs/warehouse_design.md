@@ -38,7 +38,7 @@ Each table is defined by a clear grain to reduce ambiguity and prevent double co
 
 - `date_key`
 - `full_date`
-- `day`
+- `day_of_month`
 - `day_name`
 - `day_of_week`
 - `week_of_year`
