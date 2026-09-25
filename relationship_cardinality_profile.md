@@ -10,16 +10,16 @@ The goal is to verify the structure of the source data before designing the dime
 
 ## Relationship Summary
 
-| Parent Table | Child Table | Join Key | Expected Relationship | Status |
+| Parent Table | Child Table | Join Key | Verified Relationship | Key Finding |
 |---|---|---|---|---|
-| `customers` | `orders` | `customer_id` | 1:1 at the `customer_id` level | To validate |
-| `orders` | `order_items` | `order_id` | 1:M | To validate |
-| `orders` | `order_payments` | `order_id` | 1:M | To validate |
-| `orders` | `order_reviews` | `order_id` | Mostly 1:1, possible 1:M exceptions | To validate |
-| `products` | `order_items` | `product_id` | 1:M | To validate |
-| `sellers` | `order_items` | `seller_id` | 1:M | To validate |
-| `customer_unique_id` | `customer_id` | `customer_unique_id` | 1:M | To validate |
-| `product_category_translation` | `products` | `product_category_name` | 1:M | To validate |
+| `customers` | `orders` | `customer_id` | 1:1 | Each `customer_id` is associated with one order |
+| `orders` | `order_items` | `order_id` | 1:M | 9,803 orders contain multiple item records |
+| `orders` | `order_payments` | `order_id` | 1:M | 2,961 orders contain multiple payment records |
+| `orders` | `order_reviews` | `order_id` | Mostly 1:1, with 1:M exceptions | 547 orders contain multiple reviews |
+| `products` | `order_items` | `product_id` | 1:M | 14,834 products appear in multiple order-item rows |
+| `sellers` | `order_items` | `seller_id` | 1:M | 2,524 sellers are associated with multiple orders |
+| `customer_unique_id` | `customer_id` | `customer_unique_id` | 1:M | 2,997 unique customers map to multiple `customer_id` records |
+| `product_category_translation` | `products` | `product_category_name` | 1:M with incomplete translation coverage | 2 product categories lack English translations |
 
 ---
 
