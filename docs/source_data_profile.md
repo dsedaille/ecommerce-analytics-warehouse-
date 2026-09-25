@@ -1,277 +1,285 @@
-# Source Data Profile
+# Relationship & Cardinality Profile
 
-This document summarizes the structure, grain, key fields, and data-quality characteristics of the raw Olist e-commerce source files.
+## Purpose
 
-## Source Table Summary
+This document evaluates how the Olist source tables relate to one another, including relationship type, foreign-key coverage, cardinality, and potential modeling risks.
 
-| Table | Rows | Grain | Primary Key Candidate | Important Relationships | Data Quality Notes |
-|---|---:|---|---|---|---|
-| `olist_orders_dataset` | 99,441 | One row per order | `order_id` | `customer_id` → customers | Missing approval and delivery timestamps |
-| `olist_order_items_dataset` | 112,650 | One row per item within an order | `order_id + order_item_id` | `order_id` → orders, `product_id` → products, `seller_id` → sellers | No nulls or exact duplicates |
-| `olist_customers_dataset` | 99,441 | One row per customer-order identifier | `customer_id` | `customer_id` → orders | No nulls or exact duplicates |
-| `olist_products_dataset` | 32,951 | One row per product | `product_id` | `product_id` → order items | Missing category and product attribute values |
-| `olist_order_payments_dataset` | 103,886 | One row per payment sequence within an order | `order_id + payment_sequential` | `order_id` → orders | No nulls or exact duplicates |
-| `olist_order_reviews_dataset` | 99,224 | One row per review record | `review_id` | `order_id` → orders | Large number of missing review titles and messages |
-| `olist_sellers_dataset` | 3,095 | One row per seller | `seller_id` | `seller_id` → order items | No nulls or exact duplicates |
-| `olist_geolocation_dataset` | 1,000,163 | One row per recorded geolocation observation | No single unique field | ZIP prefixes connect to customer and seller geography | 261,831 exact duplicate rows |
-| `product_category_name_translation` | 71 | One row per translated category | `product_category_name` | Joins to products | No nulls or exact duplicates |
-
-## Orders
-
-**File:** `olist_orders_dataset.csv`
-
-**Rows:** 99,441
-
-**Grain:** One row represents one order.
-
-### Key Fields
-
-- `order_id` — unique order identifier
-- `customer_id` — links the order to the customers table
-- `order_status` — current/final order status
-- `order_purchase_timestamp` — purchase date and time
-- `order_approved_at` — payment/order approval timestamp
-- `order_delivered_carrier_date` — date handed to carrier
-- `order_delivered_customer_date` — actual customer delivery date
-- `order_estimated_delivery_date` — promised delivery date
-
-### Data Quality
-
-Missing values:
-
-- `order_approved_at`: 160
-- `order_delivered_carrier_date`: 1,783
-- `order_delivered_customer_date`: 2,965
-
-No exact duplicate rows were found.
-
-The missing delivery timestamps may be legitimate for orders that were canceled, unavailable, or otherwise not completed.
+The goal is to verify the structure of the source data before designing the dimensional warehouse.
 
 ---
 
-## Order Items
+## Relationship Summary
 
-**File:** `olist_order_items_dataset.csv`
-
-**Rows:** 112,650
-
-**Grain:** One row represents one item line within an order.
-
-### Key Fields
-
-- `order_id`
-- `order_item_id`
-- `product_id`
-- `seller_id`
-- `shipping_limit_date`
-- `price`
-- `freight_value`
-
-A likely composite primary key is:
-
-`order_id + order_item_id`
-
-No null values or exact duplicate rows were found.
-
-This table will likely serve as the primary source for product-level sales and marketplace value analysis.
+| Parent Table | Child Table | Join Key | Verified Relationship | Key Finding |
+|---|---|---|---|---|
+| `customers` | `orders` | `customer_id` | 1:1 | Each `customer_id` is associated with one order |
+| `orders` | `order_items` | `order_id` | 1:M | 9,803 orders contain multiple item records |
+| `orders` | `order_payments` | `order_id` | 1:M | 2,961 orders contain multiple payment records |
+| `orders` | `order_reviews` | `order_id` | Mostly 1:1, with 1:M exceptions | 547 orders contain multiple reviews |
+| `products` | `order_items` | `product_id` | 1:M | 14,834 products appear in multiple order-item rows |
+| `sellers` | `order_items` | `seller_id` | 1:M | 2,524 sellers are associated with multiple orders |
+| `customer_unique_id` | `customer_id` | `customer_unique_id` | 1:M | 2,997 unique customers map to multiple `customer_id` records |
+| `product_category_translation` | `products` | `product_category_name` | 1:M with incomplete translation coverage | 2 product categories lack English translations |
 
 ---
 
-## Customers
+## Orders → Order Items
 
-**File:** `olist_customers_dataset.csv`
+**Join Key:** `order_id`
 
-**Rows:** 99,441
+**Verified Relationship:** One-to-many
 
-**Grain:** One row per `customer_id`.
+### Findings
 
-### Key Fields
+- 98,666 orders contain at least one item record.
+- 9,803 orders contain multiple items.
+- Orders contain an average of 1.14 items.
+- The maximum number of items in a single order is 21.
+- 775 orders have no corresponding item records.
+- No orphaned order-item records were found.
+- No duplicate `order_id + order_item_id` combinations were found.
 
-- `customer_id`
-- `customer_unique_id`
-- `customer_zip_code_prefix`
-- `customer_city`
-- `customer_state`
+### Modeling Implication
 
-No null values or exact duplicate rows were found.
+Revenue and freight metrics originate at the order-item grain.
 
-### Important Modeling Note
+Because one order can contain multiple items, the order-items table should remain separate from order-level facts unless it is aggregated first.
 
-`customer_id` and `customer_unique_id` represent different concepts.
-
-`customer_id` is associated with an order, while `customer_unique_id` can be used to identify the same underlying customer across multiple orders.
-
-This distinction will be important for repeat-customer analysis and customer lifetime metrics.
+`order_id + order_item_id` is a valid composite key candidate for the order-items table.
 
 ---
 
-## Products
+## Orders → Payments
 
-**File:** `olist_products_dataset.csv`
+**Join Key:** `order_id`
 
-**Rows:** 32,951
+**Verified Relationship:** One-to-many
 
-**Grain:** One row per product.
+### Findings
 
-**Primary Key:** `product_id`
+- 99,440 orders contain at least one payment record.
+- 2,961 orders contain multiple payment records.
+- The maximum number of payment records associated with one order is 29.
+- Only 1 order has no corresponding payment record.
+- No orphaned payment records were found.
+- No duplicate `order_id + payment_sequential` combinations were found.
 
-### Data Quality
+### Modeling Implication
 
-Missing values include:
+Payments should remain at their own grain.
 
-- `product_category_name`: 610
-- `product_name_lenght`: 610
-- `product_description_lenght`: 610
-- `product_photos_qty`: 610
-- `product_weight_g`: 2
-- `product_length_cm`: 2
-- `product_height_cm`: 2
-- `product_width_cm`: 2
+Joining payments directly to order items could multiply records when an order contains both multiple items and multiple payment records.
 
-No exact duplicate rows were found.
-
-The category field is stored in Portuguese and can be translated using the category translation table.
+`order_id + payment_sequential` is a valid composite key candidate for the payments table.
 
 ---
 
-## Payments
+## Orders → Reviews
 
-**File:** `olist_order_payments_dataset.csv`
+**Join Key:** `order_id`
 
-**Rows:** 103,886
+**Verified Relationship:** Mostly one-to-one, with one-to-many exceptions
 
-**Grain:** One row per payment sequence within an order.
+### Findings
 
-### Key Fields
+- 98,673 orders contain at least one review record.
+- 768 orders have no corresponding review record.
+- 547 orders contain multiple review records.
+- The maximum number of reviews associated with one order is 3.
+- No orphaned review records were found.
+- `review_id` is not unique.
+- 814 duplicate `review_id` occurrences were identified.
+- 789 `review_id` values are associated with more than one order.
 
-- `order_id`
-- `payment_sequential`
-- `payment_type`
-- `payment_installments`
-- `payment_value`
+### Modeling Implication
 
-A likely composite primary key is:
+The reviews table does not follow a strict one-review-per-order structure.
 
-`order_id + payment_sequential`
+`review_id` should not be treated as a standalone primary key.
 
-No null values or exact duplicate rows were found.
-
-Because an order may have multiple payment records, this table should not be joined directly to order-item detail without considering potential row multiplication.
-
----
-
-## Reviews
-
-**File:** `olist_order_reviews_dataset.csv`
-
-**Rows:** 99,224
-
-**Grain:** One row per review record.
-
-### Key Fields
-
-- `review_id`
-- `order_id`
-- `review_score`
-- `review_comment_title`
-- `review_comment_message`
-- `review_creation_date`
-- `review_answer_timestamp`
-
-### Data Quality
-
-Missing values:
-
-- `review_comment_title`: 87,656
-- `review_comment_message`: 58,247
-
-No exact duplicate rows were found.
-
-Missing review text is expected because customers may provide a numeric score without leaving written feedback.
+Reviews should likely remain at their own fact grain, and review metrics may need to be aggregated before joining to order-level or item-level data.
 
 ---
 
-## Sellers
+## Customers → Orders
 
-**File:** `olist_sellers_dataset.csv`
+**Join Key:** `customer_id`
 
-**Rows:** 3,095
+**Verified Relationship:** One-to-one
 
-**Grain:** One row per seller.
+### Findings
 
-**Primary Key:** `seller_id`
+- `customer_id` is unique in the customers table.
+- Every order has a matching customer record.
+- No `customer_id` values are associated with multiple orders.
+- The maximum number of orders associated with one `customer_id` is 1.
 
-### Fields
+### Modeling Implication
 
-- `seller_id`
-- `seller_zip_code_prefix`
-- `seller_city`
-- `seller_state`
+At the `customer_id` level, the customers and orders tables behave as a one-to-one relationship.
 
-No null values or exact duplicate rows were found.
-
----
-
-## Geolocation
-
-**File:** `olist_geolocation_dataset.csv`
-
-**Rows:** 1,000,163
-
-**Grain:** One row per geolocation observation associated with a ZIP-code prefix.
-
-### Fields
-
-- `geolocation_zip_code_prefix`
-- `geolocation_lat`
-- `geolocation_lng`
-- `geolocation_city`
-- `geolocation_state`
-
-### Data Quality
-
-The table contains:
-
-**261,831 exact duplicate rows**
-
-This will require cleaning before the table is used in the warehouse.
-
-ZIP-code prefixes are not unique in this source, so the geolocation table cannot be treated as a simple one-row-per-ZIP dimension without transformation.
-
-A future cleaning step may aggregate or select a representative latitude/longitude for each ZIP-code prefix.
+However, `customer_id` should not be used to identify repeat customers because the same underlying customer may receive a different `customer_id` for different purchases.
 
 ---
 
-## Product Category Translation
+## Customer Unique ID → Customer ID
 
-**File:** `product_category_name_translation.csv`
+**Join Key:** `customer_unique_id`
 
-**Rows:** 71
+**Verified Relationship:** One-to-many
 
-**Grain:** One row per product category translation.
+### Findings
 
-### Fields
+- The dataset contains 96,096 unique customers based on `customer_unique_id`.
+- 2,997 unique customers are associated with multiple `customer_id` records.
+- The maximum number of `customer_id` records linked to one unique customer is 17.
+- 93,099 customers are represented only once.
+- 96.88% of unique customers are represented by only one `customer_id`.
 
-- `product_category_name`
-- `product_category_name_english`
+### Modeling Implication
 
-No null values or exact duplicate rows were found.
+Customer analytics should use `customer_unique_id` when measuring:
 
-This table will be used to translate Portuguese product categories into English for reporting.
+- Repeat purchasing
+- Customer lifetime behavior
+- Purchase frequency
+- Customer retention
+
+Using `customer_id` alone would incorrectly treat repeat purchases from the same underlying customer as separate customers.
 
 ---
 
-## Key Modeling Risks Identified
+## Products → Order Items
 
-Several source tables have different grains.
+**Join Key:** `product_id`
 
-For example:
+**Verified Relationship:** One-to-many
+
+### Findings
+
+- `product_id` is unique in the products table.
+- Every product referenced in the order-items table has a matching product record.
+- All 32,951 products in the products table appear in order-item data.
+- 14,834 products appear in multiple order-item rows.
+- The most frequently occurring product appears in 527 order-item rows.
+- No orphaned product references were found.
+
+### Modeling Implication
+
+The products table is a strong candidate for a product dimension.
+
+Because each product may appear in many transactions, product attributes should be stored once in the dimension and referenced from transactional fact tables.
+
+---
+
+## Sellers → Order Items
+
+**Join Key:** `seller_id`
+
+**Verified Relationship:** One-to-many
+
+### Findings
+
+- `seller_id` is unique in the sellers table.
+- Every seller referenced in order items has a matching seller record.
+- All 3,095 sellers appear in transactional order-item data.
+- 2,524 sellers are associated with multiple orders.
+- The most active seller is associated with 1,854 distinct orders.
+- No sellers exist without corresponding order-item activity.
+- No orphaned seller references were found.
+
+### Modeling Implication
+
+The sellers table is a strong candidate for a seller dimension.
+
+Seller-level analysis can be performed by linking the seller dimension to order-item facts.
+
+---
+
+## Product Categories → Products
+
+**Join Key:** `product_category_name`
+
+**Verified Relationship:** One-to-many, with incomplete translation coverage
+
+### Findings
+
+- 610 products are missing a product category.
+- 73 distinct categories appear in the products table.
+- The translation table contains 71 categories.
+- 13 products have a populated category but no English translation.
+- Those 13 products belong to 2 untranslated categories:
+  - `pc_gamer`
+  - `portateis_cozinha_e_preparadores_de_alimentos`
+- All translation-table categories are used by at least one product.
+
+### Modeling Implication
+
+The translation table provides nearly complete category coverage but requires a documented fallback rule for the two untranslated categories.
+
+Products with missing category values should be retained and assigned an appropriate placeholder such as `Unknown` rather than dropped.
+
+---
+
+## Foreign-Key Integrity Checks
+
+The following relationships were tested for orphaned records:
+
+- `orders.customer_id` → `customers.customer_id`
+- `order_items.order_id` → `orders.order_id`
+- `order_items.product_id` → `products.product_id`
+- `order_items.seller_id` → `sellers.seller_id`
+- `order_payments.order_id` → `orders.order_id`
+- `order_reviews.order_id` → `orders.order_id`
+
+### Findings
+
+No orphaned records were found across any of the major source relationships.
+
+This indicates strong referential integrity across the core Olist source data.
+
+---
+
+## Key Modeling Risk: Grain Mismatch
+
+Several source tables exist at different levels of detail:
 
 - Orders: one row per order
 - Order items: one row per item within an order
-- Payments: one row per payment sequence within an order
-- Reviews: one row per review
+- Payments: one row per payment sequence
+- Reviews: one row per review record
 
-Joining these tables directly can multiply rows and inflate metrics such as revenue, freight cost, payment value, or review counts.
+Directly joining multiple one-to-many tables can create row multiplication.
 
-The warehouse design must preserve table grain and aggregate data appropriately before combining metrics across these sources.
+For example, an order containing:
+
+- 3 order items
+- 2 payment records
+
+could produce 6 rows if order items and payments were joined directly at the order level.
+
+This could incorrectly inflate measures such as:
+
+- Revenue
+- Freight cost
+- Payment value
+- Item counts
+- Review counts
+
+The warehouse design should preserve separate fact-table grains and aggregate measures appropriately before combining them.
+
+---
+
+## Key Conclusions
+
+The profiling results support several important warehouse-design decisions:
+
+- Preserve separate fact grains for orders, order items, payments, and reviews.
+- Use `customer_unique_id` for customer-level behavior and repeat-purchase analysis.
+- Use `order_id + order_item_id` as the order-items composite key.
+- Use `order_id + payment_sequential` as the payments composite key.
+- Do not use `review_id` as a standalone primary key.
+- Retain missing and untranslated product categories using documented cleaning rules.
+- Avoid direct joins between multiple one-to-many fact tables unless measures are aggregated first.
+
+These findings will guide the next phase of the project: dimensional warehouse design.
