@@ -4,7 +4,7 @@ An end-to-end e-commerce analytics project using SQL, ETL, dimensional modeling,
 
 ## Project Overview
 
-This project builds an analytics-ready data warehouse from the Brazilian Olist e-commerce dataset.
+This project builds an analytics-ready data warehouse from the Brazilian Olist e-commerce dataset found on Kaggle.
 
 The goal is to transform raw transactional marketplace data into a structured analytics system that supports business decisions related to:
 
